@@ -3,6 +3,8 @@ from datetime import datetime, time, timedelta
 import asyncio
 import zoneinfo
 import contextlib
+import sys
+import traceback
 
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart, Command
@@ -65,11 +67,22 @@ async def _seconds_until_next(time_of_day: time, tz_name: str) -> float:
 
 async def daily_digest_scheduler(bot: Bot) -> None:
     settings = get_settings()
-    # Парсим HH:MM из настроек
-    try:
-        hh, mm = [int(x) for x in settings.digest_time.split(":", 1)]
-        target_tod = time(hour=hh, minute=mm)
-    except Exception:
+    # Парсим HH:MM/HH.MM/HH-MM из настроек
+    raw_time = (settings.digest_time or "").strip()
+    target_tod: time
+    parsed = False
+    for sep in (":", ".", "-"):
+        if sep in raw_time:
+            try:
+                hh_str, mm_str = raw_time.split(sep, 1)
+                hh, mm = int(hh_str), int(mm_str)
+                if 0 <= hh <= 23 and 0 <= mm <= 59:
+                    target_tod = time(hour=hh, minute=mm)
+                    parsed = True
+                    break
+            except Exception:
+                pass
+    if not parsed:
         # Фоллбек: 09:00 по TZ
         target_tod = time(hour=9, minute=0)
 
@@ -77,11 +90,11 @@ async def daily_digest_scheduler(bot: Bot) -> None:
         try:
             # Ждём до следующего времени запуска в локальном TZ
             sleep_s = await _seconds_until_next(target_tod, settings.timezone)
+            now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
+            print(f"[digest] settings_tz={settings.timezone}, settings_digest_time={settings.digest_time}, now_local={now_local}, target_tod={target_tod}, sleep_s={sleep_s}")
             if sleep_s > 0:
                 await asyncio.sleep(sleep_s)
 
-            # Сбор дайджеста на сегодня в локальном TZ
-            now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
             matches = fetch_matches_for_local_day(
                 api_url=settings.api_url,
                 element_alias=settings.element_alias,
@@ -95,6 +108,7 @@ async def daily_digest_scheduler(bot: Bot) -> None:
 
             # Отправляем в указанный чат/канал
             await bot.send_message(settings.chat_id, text, disable_web_page_preview=True)
+            print(f"[digest] sent on {now_local.strftime('%H:%M')} local time")
 
             # Гарантируем, что следующий запуск — завтра
             tomorrow_same_time = datetime.now(zoneinfo.ZoneInfo(settings.timezone)).replace(
@@ -102,9 +116,12 @@ async def daily_digest_scheduler(bot: Bot) -> None:
             ) + timedelta(days=1)
             await asyncio.sleep(max(0.0, (tomorrow_same_time - datetime.now(zoneinfo.ZoneInfo(settings.timezone))).total_seconds()))
         except asyncio.CancelledError:
-            raise
-        except Exception:
-            # Не валим цикл: ждём минуту и пробуем снова
+            # Завершаем шедулер по отмене без проброса
+            return
+        except Exception as e:
+            # Не валим цикл: логируем и ждём минуту
+            print(f"[digest][error] {e}")
+            traceback.print_exc(file=sys.stdout)
             await asyncio.sleep(60)
 
 
