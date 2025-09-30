@@ -1,8 +1,10 @@
 # Okko Basketball Digest Bot
 
-Ежедневный дайджест предстоящих баскетбольных матчей из noauth API Okko в Telegram. 
+Ежедневный дайджест предстоящих баскетбольных матчей из noauth API Okko в Telegram.
+Бот в телеграм доступен по ссылке https://t.me/okko_basketball_bot
+Канал с ежедневным дайджестом в 17.00 по МСК - https://t.me/okko_basketball
 
-- Источник страницы: [okko.sport — Баскетбол](https://okko.sport/sport_collection/basketball)
+- Источник матчей: [okko.sport — Баскетбол](https://okko.sport/sport_collection/basketball-broadcasts)
 - Источник данных (noauth API): `https://ctx.playfamily.ru/screenapi/v5/noauth/sportcollection/web/1?elementAlias=basketball-broadcasts&elementType=SPORT_COLLECTION&maxResults=50&includeProductsForUpsale=false`
 
 ## Требования
@@ -25,7 +27,7 @@ CHAT_ID=123456789
 
 # Scheduling / locale
 TZ=Europe/Moscow
-DIGEST_TIME=09:00
+DIGEST_TIME=17:00
 
 # API source
 API_URL=https://ctx.playfamily.ru/screenapi/v5/noauth/sportcollection/web/1
@@ -56,4 +58,4 @@ docker compose up -d --build
 ## Как формируется дайджест
 - Парсинг `element.collectionItems.items[*].element` из noauth API.
 - Фильтр по `gameStatus == NOT_STARTED` и `kickOffDate` в пределах локального дня `TZ`.
-- Формат строки: `HH:MM — Home vs Away — FREE`.
+- Группировка по лиге: матчи выводятся блоками по названию лиги, внутри блока — отсортированы по времени начала
