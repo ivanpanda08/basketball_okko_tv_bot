@@ -1,61 +1,94 @@
-# Okko Basketball Digest Bot
+<!-- Badges -->
+<p align="center">
+  <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://www.docker.com/"><img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white"></a>
+  <a href="https://t.me/okko_basketball_bot"><img alt="Telegram Bot" src="https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white"></a>
+  <a href="https://t.me/okko_basketball"><img alt="Telegram Channel" src="https://img.shields.io/badge/Telegram-Channel-26A5E4?logo=telegram&logoColor=white"></a>
+  <img alt="Timezone" src="https://img.shields.io/badge/TZ-Europe%2FMoscow-000000?logo=clockify&logoColor=white">
+</p>
+
+<h2 align="center">🏀 Баскетбол на Okko — Telegram Bot</h2>
 
 Ежедневный дайджест предстоящих баскетбольных матчей из noauth API Okko в Telegram.
-Бот в телеграм доступен по ссылке https://t.me/okko_basketball_bot
-Канал с ежедневным дайджестом в 17.00 по МСК - https://t.me/okko_basketball
+
+Быстрые ссылки:
+- [🤖 Бот](https://t.me/okko_basketball_bot)
+- [📢 Канал](https://t.me/okko_basketball)
+
+---
 
 - Источник матчей: [okko.sport — Баскетбол](https://okko.sport/sport_collection/basketball-broadcasts)
 - Источник данных (noauth API): `https://ctx.playfamily.ru/screenapi/v5/noauth/sportcollection/web/1?elementAlias=basketball-broadcasts&elementType=SPORT_COLLECTION&maxResults=50&includeProductsForUpsale=false`
 
-## Требования
-- Python 3.11+ (для локального запуска) или Docker/Compose
+---
 
-## Установка
+## 🗒️ Команды бота
+
+- `/today` — присылает дайджест матчей на сегодня
+- `/tomorrow` — присылает дайджест матчей на завтра
+
+## ✨ Что делает бот
+
+- Парсит `element.collectionItems.items[*].element` из noauth API
+- Фильтрует по `gameStatus == NOT_STARTED` и дате старта в пределах локального дня `TZ`
+- Группирует по лиге и сортирует встречи по времени начала
+- В 17:00 по `GMT+3` публикует дайджест в канал
+
+## 🧰 Требования
+
+- Python 3.11+ (локально) или Docker/Compose
+
+## 🚀 Установка (локально)
+
 ```bash
-cd /okko_tv_bot
+# 1) Клонирование репозитория
+git clone https://github.com/ivanpanda08/basketball_okko_tv_bot
+cd okko_tv_bot
+
+# 2) Виртуальное окружение и зависимости
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Конфигурация
-Создай файл `.env` в корне со следующим содержимым:
+## ⚙️ Конфигурация
+
+Используй шаблон окружения и при необходимости поменяй значения:
 ```bash
-# Telegram bot
-BOT_TOKEN=xxxxxxxx:yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
-CHAT_ID=123456789
-
-# Scheduling / locale
-TZ=Europe/Moscow
-DIGEST_TIME=17:00
-
-# API source
-API_URL=https://ctx.playfamily.ru/screenapi/v5/noauth/sportcollection/web/1
-ELEMENT_ALIAS=basketball-broadcasts
-ELEMENT_TYPE=SPORT_COLLECTION
-MAX_RESULTS=50
-USER_AGENT=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36
-
+cp .env.template .env
 ```
 
 Примечания:
-- `CHAT_ID` может быть ID пользователя или чата/канала (для канала нужен бот как админ).
-- `TZ` влияет на определение «сегодня» и формат времени.
 
-## Запуск бота (polling)
+- Обязательно указать - `BOT_TOKEN`
+- `CHAT_ID` может быть ID пользователя или чата/канала (для канала нужен бот как админ)
+- `TZ` влияет на определение «сегодня» и формат времени
+
+## ▶️ Запуск бота (polling)
+
 Бот отвечает на `/start` и сразу присылает дайджест «на сегодня».
+
 ```bash
 . .venv/bin/activate
 python -m app.poller
 ```
 
-## Запуск через Docker Compose
+## 🐳 Запуск через Docker Compose
 
 ```bash
 docker compose up -d --build
 ```
 
-## Как формируется дайджест
-- Парсинг `element.collectionItems.items[*].element` из noauth API.
-- Фильтр по `gameStatus == NOT_STARTED` и `kickOffDate` в пределах локального дня `TZ`.
-- Группировка по лиге: матчи выводятся блоками по названию лиги, внутри блока — отсортированы по времени начала
+---
+
+## 🧭 Навигация по проекту
+
+```
+app/
+  config.py        # конфигурация/переменные окружения
+  formatting.py    # форматирование сообщений
+  http.py          # HTTP-клиент
+  models.py        # доменные модели
+  parser.py        # парсинг ответа Okko
+  poller.py        # telegram polling
+```
