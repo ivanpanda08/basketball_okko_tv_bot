@@ -8,7 +8,7 @@ WORKDIR /app
 
 # System deps (minimal)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first for better caching
