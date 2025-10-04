@@ -90,10 +90,13 @@ async def daily_digest_scheduler(bot: Bot) -> None:
         try:
             # Ждём до следующего времени запуска в локальном TZ
             sleep_s = await _seconds_until_next(target_tod, settings.timezone)
-            now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
-            print(f"[digest] settings_tz={settings.timezone}, settings_digest_time={settings.digest_time}, now_local={now_local}, target_tod={target_tod}, sleep_s={sleep_s}")
+            print(f"[digest] settings_tz={settings.timezone}, settings_digest_time={settings.digest_time}, target_tod={target_tod}, sleep_s={sleep_s}")
             if sleep_s > 0:
                 await asyncio.sleep(sleep_s)
+
+            # Получаем актуальное время ПОСЛЕ сна
+            now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
+            print(f"[digest] woke up at {now_local}")
 
             matches = fetch_matches_for_local_day(
                 api_url=settings.api_url,
@@ -110,11 +113,6 @@ async def daily_digest_scheduler(bot: Bot) -> None:
             await bot.send_message(settings.chat_id, text, disable_web_page_preview=True)
             print(f"[digest] sent on {now_local.strftime('%H:%M')} local time")
 
-            # Гарантируем, что следующий запуск — завтра
-            tomorrow_same_time = datetime.now(zoneinfo.ZoneInfo(settings.timezone)).replace(
-                hour=target_tod.hour, minute=target_tod.minute, second=0, microsecond=0
-            ) + timedelta(days=1)
-            await asyncio.sleep(max(0.0, (tomorrow_same_time - datetime.now(zoneinfo.ZoneInfo(settings.timezone))).total_seconds()))
         except asyncio.CancelledError:
             # Завершаем шедулер по отмене без проброса
             return
