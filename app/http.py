@@ -8,6 +8,7 @@ import httpx
 
 DEFAULT_HEADERS = {
     "Accept": "application/json",
+    "Referer": "https://okko.sport/",
 }
 
 
@@ -28,7 +29,11 @@ def get_json(
     last_exc: Optional[Exception] = None
     for attempt in range(retries):
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=True,
+                cookies=httpx.Cookies(),
+            ) as client:
                 resp = client.get(url, params=params, headers=merged_headers)
                 resp.raise_for_status()
                 return resp.json()
