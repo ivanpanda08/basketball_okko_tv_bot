@@ -14,6 +14,9 @@ ELEMENT_TYPE = "SPORT_COLLECTION"
 MAX_RESULTS = 50
 TZ = "Europe/Moscow"
 DIGEST_TIME = "09:00"
+POLLING_TIMEOUT = 30
+BOT_HTTP_TIMEOUT = 75
+EUROLEAGUE_ROUND_PREFIX = "euroleague-25-26-regular-season-"
 HELP_TEXT = """
 <b>Привет! 👋</b>
 
@@ -35,6 +38,9 @@ class Settings:
     element_type: str = os.getenv("ELEMENT_TYPE", ELEMENT_TYPE)
     max_results: int = int(os.getenv("MAX_RESULTS", MAX_RESULTS))
     user_agent: str = os.getenv("USER_AGENT", USER_AGENT)
+    euroleague_round_prefix: str = os.getenv("EUROLEAGUE_ROUND_PREFIX", EUROLEAGUE_ROUND_PREFIX)
+    polling_timeout: int = int(os.getenv("POLLING_TIMEOUT", POLLING_TIMEOUT))
+    bot_http_timeout: int = int(os.getenv("BOT_HTTP_TIMEOUT", BOT_HTTP_TIMEOUT))
 
 def get_settings() -> Settings:
     settings = Settings()

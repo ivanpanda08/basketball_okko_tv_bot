@@ -9,6 +9,7 @@ import traceback
 from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 
 from .config import get_settings, HELP_TEXT
 from .parser import fetch_matches_for_local_day
@@ -125,13 +126,18 @@ async def daily_digest_scheduler(bot: Bot) -> None:
 
 async def run_async() -> None:
     settings = get_settings()
-    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode="HTML"))
+    session = AiohttpSession(timeout=settings.bot_http_timeout)
+    bot = Bot(
+        token=settings.bot_token,
+        session=session,
+        default=DefaultBotProperties(parse_mode="HTML"),
+    )
     dp = Dispatcher()
     dp.include_router(router)
     # Запускаем фоновый планировщик ежедневного дайджеста
     digest_task = asyncio.create_task(daily_digest_scheduler(bot))
     try:
-        await dp.start_polling(bot)
+        await dp.start_polling(bot, polling_timeout=settings.polling_timeout)
     finally:
         digest_task.cancel()
         with contextlib.suppress(Exception):
