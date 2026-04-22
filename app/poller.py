@@ -10,6 +10,7 @@ from aiogram import Bot, Dispatcher, Router, types
 from aiogram.filters import CommandStart, Command
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import TelegramNetworkError
 
 from .config import get_settings, HELP_TEXT
 from .parser import fetch_matches_for_local_day
@@ -136,8 +137,22 @@ async def run_async() -> None:
     dp.include_router(router)
     # Запускаем фоновый планировщик ежедневного дайджеста
     digest_task = asyncio.create_task(daily_digest_scheduler(bot))
+    retry_count = 0
     try:
-        await dp.start_polling(bot, polling_timeout=settings.polling_timeout)
+        while True:
+            try:
+                await dp.start_polling(bot, polling_timeout=settings.polling_timeout)
+                break
+            except asyncio.CancelledError:
+                raise
+            except (TelegramNetworkError, asyncio.TimeoutError) as exc:
+                retry_count += 1
+                delay = min(60, 2 ** min(retry_count, 5))
+                print(
+                    f"[polling][network_error] {exc}. "
+                    f"Retry in {delay}s (attempt={retry_count})"
+                )
+                await asyncio.sleep(delay)
     finally:
         digest_task.cancel()
         with contextlib.suppress(Exception):
