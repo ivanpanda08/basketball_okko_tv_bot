@@ -1,0 +1,24 @@
+[Unit]
+Description=Okko basketball Telegram bot
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=okko-bot
+Group=okko-bot
+WorkingDirectory=/opt/okko_tv_bot
+ExecStart=/opt/okko_tv_bot/.venv/bin/python -m app.poller
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

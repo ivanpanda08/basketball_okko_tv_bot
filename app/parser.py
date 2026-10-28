@@ -14,6 +14,10 @@ VTB_KEYS = ("vtb", "vtb-united", "vtb-league", "exttv")
 OKKO_BASE = "https://okko.sport"
 
 
+class ScheduleUnavailable(RuntimeError):
+    """The source did not return a usable match collection."""
+
+
 def _guess_competition(el: Dict) -> str:
     # Try explicit fields first if Okko exposes tournament name
     name = (el.get("name") or "").lower()
@@ -36,7 +40,17 @@ def _fetch_page(api_url: str, params: Dict[str, str], user_agent: str, page_toke
     p = dict(params)
     if page_token:
         p["pageToken"] = page_token
-    return get_json(api_url, params=p, user_agent=user_agent)
+    try:
+        data = get_json(api_url, params=p, user_agent=user_agent)
+    except Exception as exc:
+        raise ScheduleUnavailable("Okko schedule request failed") from exc
+    if not isinstance(data, dict) or data.get("antibot"):
+        raise ScheduleUnavailable("Okko blocked the schedule request")
+    element = data.get("element")
+    collection = element.get("collectionItems") if isinstance(element, dict) else None
+    if not isinstance(collection, dict) or not isinstance(collection.get("items"), list):
+        raise ScheduleUnavailable("Okko returned an unexpected schedule structure")
+    return data
 
 
 def _iter_elements(api_url: str, base_params: Dict[str, str], user_agent: str) -> Iterator[Dict]:

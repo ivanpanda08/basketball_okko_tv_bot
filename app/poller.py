@@ -3,57 +3,99 @@ from datetime import datetime, time, timedelta
 import asyncio
 import zoneinfo
 import contextlib
+import logging
 import sys
 import traceback
 
-from aiogram import Bot, Dispatcher, Router, types
+from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.filters import CommandStart, Command
 from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramNetworkError
 
-from .config import get_settings, HELP_TEXT
-from .parser import fetch_matches_for_local_day
+from .config import DIGEST_TIME, get_settings, HELP_TEXT
+from .parser import ScheduleUnavailable, fetch_matches_for_local_day
 from .formatting import format_digest
+from .telegram_session import TelegramSession
+from .euroleague import BUTTONS, DataUnavailable, fetch_league_digest, format_league_digest
+from .league_jobs import weekly_digest_scheduler
 
 
 router = Router()
 
+def main_keyboard() -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[[
+            types.KeyboardButton(text=BUTTONS["E"]),
+            types.KeyboardButton(text=BUTTONS["U"]),
+        ]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
 @router.message(CommandStart())
+@router.message(Command("menu"))
 async def on_start(message: types.Message) -> None:
-    await message.answer(HELP_TEXT, disable_web_page_preview=True)
+    await message.answer(HELP_TEXT, disable_web_page_preview=True, reply_markup=main_keyboard())
+
+
+@router.message(Command("euroleague"))
+@router.message(F.text == BUTTONS["E"])
+async def on_euroleague(message: types.Message) -> None:
+    await answer_league_digest(message, "E")
+
+
+@router.message(Command("eurocup"))
+@router.message(F.text == BUTTONS["U"])
+async def on_eurocup(message: types.Message) -> None:
+    await answer_league_digest(message, "U")
+
+
+async def answer_league_digest(message: types.Message, competition: str) -> None:
+    await message.answer("Загружаю свежие результаты и таблицу…", reply_markup=main_keyboard())
+    try:
+        digest = await asyncio.to_thread(
+            fetch_league_digest, competition,
+            datetime.now(zoneinfo.ZoneInfo("Europe/Moscow")),
+        )
+    except DataUnavailable:
+        logging.getLogger(__name__).exception("Could not load league %s", competition)
+        await message.answer("Не удалось получить данные турнира. Источник временно недоступен. Попробуйте позже.")
+        return
+    for text in format_league_digest(digest):
+        await message.answer(text, disable_web_page_preview=True, reply_markup=main_keyboard())
 
 
 @router.message(Command("today"))
 async def on_today(message: types.Message) -> None:
-    settings = get_settings()
-    now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
-    matches = fetch_matches_for_local_day(
-        api_url=settings.api_url,
-        element_alias=settings.element_alias,
-        element_type=settings.element_type,
-        max_results=settings.max_results,
-        user_agent=settings.user_agent,
-        target_date_local=now_local,
-        timezone_name=settings.timezone,
-    )
-    text = format_digest(matches, settings.timezone, now_local)
-    await message.answer(text, disable_web_page_preview=True)
+    await answer_digest(message, days_ahead=0)
 
 @router.message(Command("tomorrow"))
 async def on_tomorrow(message: types.Message) -> None:
+    await answer_digest(message, days_ahead=1)
+
+
+async def answer_digest(message: types.Message, days_ahead: int) -> None:
     settings = get_settings()
-    now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
-    matches = fetch_matches_for_local_day(
-        api_url=settings.api_url,
-        element_alias=settings.element_alias,
-        element_type=settings.element_type,
-        max_results=settings.max_results,
-        user_agent=settings.user_agent,
-        target_date_local=now_local + timedelta(days=1),
-        timezone_name=settings.timezone,
-    )
-    text = format_digest(matches, settings.timezone, now_local + timedelta(days=1))
+    target = datetime.now(zoneinfo.ZoneInfo(settings.timezone)) + timedelta(days=days_ahead)
+    try:
+        matches = await asyncio.to_thread(
+            fetch_matches_for_local_day,
+            api_url=settings.api_url,
+            element_alias=settings.element_alias,
+            element_type=settings.element_type,
+            max_results=settings.max_results,
+            user_agent=settings.user_agent,
+            target_date_local=target,
+            timezone_name=settings.timezone,
+        )
+    except ScheduleUnavailable:
+        logging.getLogger(__name__).exception("Could not load Okko schedule")
+        await message.answer(
+            "Не удалось получить расписание Okko. Источник временно недоступен. "
+            "Попробуйте позже.",
+        )
+        return
+    text = format_digest(matches, settings.timezone, target)
     await message.answer(text, disable_web_page_preview=True)
 
 async def _seconds_until_next(time_of_day: time, tz_name: str) -> float:
@@ -85,8 +127,8 @@ async def daily_digest_scheduler(bot: Bot) -> None:
             except Exception:
                 pass
     if not parsed:
-        # Фоллбек: 09:00 по TZ
-        target_tod = time(hour=9, minute=0)
+        # При некорректной настройке используем стандартное время дайджеста.
+        target_tod = time.fromisoformat(DIGEST_TIME)
 
     while True:
         try:
@@ -100,7 +142,8 @@ async def daily_digest_scheduler(bot: Bot) -> None:
             now_local = datetime.now(zoneinfo.ZoneInfo(settings.timezone))
             print(f"[digest] woke up at {now_local}")
 
-            matches = fetch_matches_for_local_day(
+            matches = await asyncio.to_thread(
+                fetch_matches_for_local_day,
                 api_url=settings.api_url,
                 element_alias=settings.element_alias,
                 element_type=settings.element_type,
@@ -127,7 +170,7 @@ async def daily_digest_scheduler(bot: Bot) -> None:
 
 async def run_async() -> None:
     settings = get_settings()
-    session = AiohttpSession(timeout=settings.bot_http_timeout)
+    session = TelegramSession(timeout=settings.bot_http_timeout)
     bot = Bot(
         token=settings.bot_token,
         session=session,
@@ -137,6 +180,7 @@ async def run_async() -> None:
     dp.include_router(router)
     # Запускаем фоновый планировщик ежедневного дайджеста
     digest_task = asyncio.create_task(daily_digest_scheduler(bot))
+    weekly_task = asyncio.create_task(weekly_digest_scheduler(bot))
     retry_count = 0
     try:
         while True:
@@ -154,12 +198,18 @@ async def run_async() -> None:
                 )
                 await asyncio.sleep(delay)
     finally:
-        digest_task.cancel()
-        with contextlib.suppress(Exception):
-            await digest_task
+        for task in (digest_task, weekly_task):
+            task.cancel()
+        for task in (digest_task, weekly_task):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 def run() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     asyncio.run(run_async())
 
 
