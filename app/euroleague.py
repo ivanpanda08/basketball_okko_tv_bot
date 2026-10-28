@@ -10,10 +10,18 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from .team_names import TEAM_NAMES
+
 
 API_BASE = "https://api-live.euroleague.net"
 COMPETITIONS = {"E": "Евролига", "U": "Еврокубок"}
 BUTTONS = {"E": "🏀 Евролига", "U": "🏆 Еврокубок"}
+SOURCE_PAGES = {
+    code: f"https://www.euroleaguebasketball.net/{slug}"
+    for code, slug in (("E", "euroleague"), ("U", "eurocup"))
+}
+MONTHS = ("января", "февраля", "марта", "апреля", "мая", "июня",
+          "июля", "августа", "сентября", "октября", "ноября", "декабря")
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +36,7 @@ class Club(BaseModel):
 
     @property
     def title(self) -> str:
-        return escape(self.abbreviatedName.strip() or self.name)
+        return escape(TEAM_NAMES.get(self.code) or self.abbreviatedName.strip() or self.name)
 
 
 class Side(BaseModel):
@@ -151,37 +159,71 @@ def fetch_league_digest(
         raise DataUnavailable(f"Could not load {competition} data") from exc
 
 
-def _split_lines(header: str, lines: list[str], limit: int = 3500) -> list[str]:
-    """Split at complete HTML lines; leave room below Telegram's 4096 limit."""
+def _message_size(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _split_lines(header: str, lines: list[str], footer: str, limit: int = 3500) -> list[str]:
+    """Keep source links on every page, with the current date/group on continuations."""
     messages: list[str] = []
     current = header
+    section = ""
     for line in lines:
-        if len(current) + len(line) + 1 > limit:
-            messages.append(current)
+        is_section = line.startswith(("\n📅", "\n🔹"))
+        if _message_size(current + "\n" + line + footer) > limit:
+            messages.append(current + footer)
             current = header + "\n<i>Продолжение</i>"
+            if section and not is_section:
+                current += "\n" + section
+        if is_section:
+            section = line
         current += "\n" + line
-    messages.append(current)
+    messages.append(current + footer)
     return messages
 
 
+def _date_label(value: datetime, year: bool = False) -> str:
+    return f"{value.day} {MONTHS[value.month - 1]}" + (f" {value.year}" if year else "")
+
+
+def _period_label(start: datetime, end: datetime) -> str:
+    last = end - timedelta(microseconds=1)
+    if start.date() == last.date():
+        return _date_label(start)
+    if (start.year, start.month) == (last.year, last.month):
+        return f"{start.day}–{_date_label(last)}"
+    show_year = start.year != last.year
+    return f"{_date_label(start, show_year)} – {_date_label(last, show_year)}"
+
+
 def format_league_digest(digest: LeagueDigest) -> list[str]:
-    heading = f"<b>{BUTTONS[digest.competition]} · {escape(digest.season)}</b>"
-    stamp = digest.fetched_at.strftime("%d.%m.%Y %H:%M")
+    heading = BUTTONS[digest.competition]
+    season = escape(digest.season.replace("-", "/"))
+    stamp = f"{_date_label(digest.fetched_at)} в {digest.fetched_at:%H:%M}"
     tz_label = "МСК" if str(digest.fetched_at.tzinfo) == "Europe/Moscow" else str(digest.fetched_at.tzinfo)
-    heading += f"\n<i>Обновлено {stamp} {escape(tz_label)}</i>"
-    last_day = (digest.period_end - timedelta(microseconds=1)).strftime("%d.%m.%Y")
-    result_lines = [f"<b>Результаты {digest.period_start:%d.%m.%Y}–{last_day}</b>"]
+    updated = f"🕘 Обновлено {stamp} {escape(tz_label)}"
+    base_url = SOURCE_PAGES[digest.competition]
+    results_footer = f'\n\n🔗 <a href="{base_url}/game-center/">Все результаты · EuroLeague Basketball</a>\n{updated}'
+    table_footer = f'\n\n🔗 <a href="{base_url}/standings/">Полная таблица · EuroLeague Basketball</a>\n{updated}'
+    results_header = f"<b>{heading} · Результаты</b>\n🗓 {_period_label(digest.period_start, digest.period_end)} · сезон {season}"
+    result_lines: list[str] = []
     day = None
     for game in digest.results:
         local = game.utcDate.astimezone(digest.fetched_at.tzinfo)
         if local.date() != day:
-            result_lines.append(f"\n<b>{local:%d.%m}</b>")
+            result_lines.append(f"\n📅 <b>{_date_label(local)}</b>\n")
             day = local.date()
-        result_lines.append(f"{game.local.club.title} <b>{game.local.score}:{game.road.score}</b> {game.road.club.title}")
+        home, away = game.local.club.title, game.road.club.title
+        if game.local.score > game.road.score:
+            home = f"<b>{home}</b>"
+        elif game.road.score > game.local.score:
+            away = f"<b>{away}</b>"
+        result_lines.append(f"{home} <b>{game.local.score}:{game.road.score}</b> {away}")
     if not digest.results:
         result_lines.append("За этот период завершённых матчей нет.")
-    messages = _split_lines(heading, result_lines)
-    table_lines = ["<b>Таблица регулярного сезона</b>", "Место · команда · победы–поражения"]
+    messages = _split_lines(results_header, result_lines, results_footer)
+    table_header = f"<b>{heading} · Таблица</b>\nРегулярный сезон {season}"
+    table_lines = ["\n📊 <b>Победы–поражения</b>"]
     if digest.standings_unavailable:
         table_lines = ["Таблица временно недоступна или ещё обновляется. Попробуйте позже."]
     elif not digest.standings:
@@ -193,9 +235,10 @@ def format_league_digest(digest: LeagueDigest) -> list[str]:
         for group, teams in sorted(groups.items()):
             if digest.competition == "U" or len(groups) > 1:
                 label = group.removeprefix("Group ")
-                table_lines.append(f"\n<b>Группа {escape(label)}</b>")
+                table_lines.append(f"\n🔹 <b>Группа {escape(label)}</b>")
+            else:
+                table_lines.append("")
             for team in sorted(teams, key=lambda t: t.position):
-                table_lines.append(f"{team.position}. {team.club.title} — <b>{team.gamesWon}–{team.gamesLost}</b>")
-        table_lines.append(f"\n<i>По данным API: тур {digest.standings_round}. Источник: EuroLeague Basketball.</i>")
-    messages.extend(_split_lines(heading, table_lines))
+                table_lines.append(f"{team.position}. {team.club.title} · <b>{team.gamesWon}–{team.gamesLost}</b>")
+    messages.extend(_split_lines(table_header, table_lines, table_footer))
     return messages

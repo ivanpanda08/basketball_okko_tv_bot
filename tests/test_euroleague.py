@@ -107,6 +107,10 @@ class LeagueTests(unittest.TestCase):
         self.assertIn("Группа A", texts[-1])
         self.assertIn("Группа B", texts[-1])
         self.assertTrue(all(t.count("<b>") == t.count("</b>") for t in texts))
+        self.assertTrue(all('href="https://www.euroleaguebasketball.net/eurocup/' in t for t in texts))
+        self.assertTrue(all(t.rstrip().endswith("МСК") for t in texts))
+        self.assertTrue(all("📅 <b>27 октября</b>" in t for t in texts[:-1]))
+        self.assertIn("<b>A &amp; B</b> <b>90:85</b> Away", texts[0])
 
     def test_next_monday_at_nine_moscow(self):
         for now, expected in [
