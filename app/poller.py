@@ -16,7 +16,7 @@ from .config import DIGEST_TIME, get_settings, HELP_TEXT
 from .parser import ScheduleUnavailable, fetch_matches_for_local_day
 from .formatting import format_digest
 from .telegram_session import TelegramSession
-from .euroleague import BUTTONS, DataUnavailable, fetch_league_digest, format_league_digest
+from .euroleague import BUTTONS, VIEW_BUTTONS, DataUnavailable, fetch_league_digest, format_league_digest
 from .league_jobs import weekly_digest_scheduler
 
 
@@ -25,9 +25,9 @@ router = Router()
 def main_keyboard() -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
         keyboard=[[
-            types.KeyboardButton(text=BUTTONS["E"]),
-            types.KeyboardButton(text=BUTTONS["U"]),
-        ]],
+            types.KeyboardButton(text=VIEW_BUTTONS[(code, "results")]),
+            types.KeyboardButton(text=VIEW_BUTTONS[(code, "table")]),
+        ] for code in ("E", "U")],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -39,29 +39,47 @@ async def on_start(message: types.Message) -> None:
 
 
 @router.message(Command("euroleague"))
+@router.message(Command("euroleague_table"))
 @router.message(F.text == BUTTONS["E"])
+@router.message(F.text == VIEW_BUTTONS[("E", "table")])
 async def on_euroleague(message: types.Message) -> None:
-    await answer_league_digest(message, "E")
+    await answer_league_digest(message, "E", "table")
 
 
 @router.message(Command("eurocup"))
+@router.message(Command("eurocup_table"))
 @router.message(F.text == BUTTONS["U"])
+@router.message(F.text == VIEW_BUTTONS[("U", "table")])
 async def on_eurocup(message: types.Message) -> None:
-    await answer_league_digest(message, "U")
+    await answer_league_digest(message, "U", "table")
 
 
-async def answer_league_digest(message: types.Message, competition: str) -> None:
-    await message.answer("Загружаю свежие результаты и таблицу…", reply_markup=main_keyboard())
+@router.message(Command("euroleague_results"))
+@router.message(F.text == VIEW_BUTTONS[("E", "results")])
+async def on_euroleague_results(message: types.Message) -> None:
+    await answer_league_digest(message, "E", "results")
+
+
+@router.message(Command("eurocup_results"))
+@router.message(F.text == VIEW_BUTTONS[("U", "results")])
+async def on_eurocup_results(message: types.Message) -> None:
+    await answer_league_digest(message, "U", "results")
+
+
+async def answer_league_digest(message: types.Message, competition: str, view: str = "table") -> None:
+    loading = "Загружаю свежие результаты…" if view == "results" else "Загружаю актуальную таблицу…"
+    await message.answer(loading, reply_markup=main_keyboard())
     try:
         digest = await asyncio.to_thread(
             fetch_league_digest, competition,
             datetime.now(zoneinfo.ZoneInfo("Europe/Moscow")),
+            include_standings=view != "results",
         )
     except DataUnavailable:
         logging.getLogger(__name__).exception("Could not load league %s", competition)
         await message.answer("Не удалось получить данные турнира. Источник временно недоступен. Попробуйте позже.")
         return
-    for text in format_league_digest(digest):
+    for text in format_league_digest(digest, view=view):
         await message.answer(text, disable_web_page_preview=True, reply_markup=main_keyboard())
 
 

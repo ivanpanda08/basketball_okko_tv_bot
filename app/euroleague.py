@@ -16,6 +16,11 @@ from .team_names import TEAM_NAMES
 API_BASE = "https://api-live.euroleague.net"
 COMPETITIONS = {"E": "Евролига", "U": "Еврокубок"}
 BUTTONS = {"E": "🏀 Евролига", "U": "🏆 Еврокубок"}
+VIEW_BUTTONS = {
+    (code, view): f"{icon} {COMPETITIONS[code]} · {label}"
+    for code, icon in (("E", "🏀"), ("U", "🏆"))
+    for view, label in (("results", "Результаты"), ("table", "Таблица"))
+}
 SOURCE_PAGES = {
     code: f"https://www.euroleaguebasketball.net/{slug}"
     for code, slug in (("E", "euroleague"), ("U", "eurocup"))
@@ -103,6 +108,7 @@ def _all_pages(client: httpx.Client, path: str) -> list[dict]:
 def fetch_league_digest(
     competition: str, now: datetime, timezone_name: str = "Europe/Moscow",
     weekly: bool = False,
+    *, include_standings: bool = True,
 ) -> LeagueDigest:
     if competition not in COMPETITIONS:
         raise ValueError("Unknown competition")
@@ -132,7 +138,7 @@ def fetch_league_digest(
             standings_round = max(rounds, default=None)
             standings: list[Standing] = []
             unavailable = False
-            if standings_round is not None:
+            if include_standings and standings_round is not None:
                 try:
                     data = _get(client, f"/v3/competitions/{competition}/seasons/{code}"
                                 f"/rounds/{standings_round}/basicstandings")
@@ -196,7 +202,9 @@ def _period_label(start: datetime, end: datetime) -> str:
     return f"{_date_label(start, show_year)} – {_date_label(last, show_year)}"
 
 
-def format_league_digest(digest: LeagueDigest) -> list[str]:
+def format_league_digest(digest: LeagueDigest, view: str = "all") -> list[str]:
+    if view not in {"all", "results", "table"}:
+        raise ValueError("Unknown digest view")
     heading = BUTTONS[digest.competition]
     season = escape(digest.season.replace("-", "/"))
     stamp = f"{_date_label(digest.fetched_at)} в {digest.fetched_at:%H:%M}"
@@ -221,7 +229,9 @@ def format_league_digest(digest: LeagueDigest) -> list[str]:
         result_lines.append(f"{home} <b>{game.local.score}:{game.road.score}</b> {away}")
     if not digest.results:
         result_lines.append("За этот период завершённых матчей нет.")
-    messages = _split_lines(results_header, result_lines, results_footer)
+    messages = [] if view == "table" else _split_lines(results_header, result_lines, results_footer)
+    if view == "results":
+        return messages
     table_header = f"<b>{heading} · Таблица</b>\nРегулярный сезон {season}"
     table_lines = ["\n📊 <b>Победы–поражения</b>"]
     if digest.standings_unavailable:

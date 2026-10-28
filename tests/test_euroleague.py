@@ -4,7 +4,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 from app.euroleague import (
-    BUTTONS, DataUnavailable, LeagueDigest, Game, Standing,
+    BUTTONS, VIEW_BUTTONS, DataUnavailable, LeagueDigest, Game, Standing,
     _all_pages, fetch_league_digest, format_league_digest,
 )
 from app.league_jobs import next_weekly_run, publish_weekly_digest
@@ -35,12 +35,12 @@ def digest(competition="E"):
 
 
 class LeagueTests(unittest.TestCase):
-    def fetch(self, games, table=None, now=NOW, weekly=False):
+    def fetch(self, games, table=None, now=NOW, weekly=False, include_standings=True):
         seasons = [{"code": "E2027", "year": 2027, "startDate": "2027-07-01"},
                    {"code": "E2026", "alias": "2026-27", "year": 2026, "startDate": "2026-07-01"}]
         with patch("app.euroleague._all_pages", side_effect=[seasons, games]), \
              patch("app.euroleague._get", return_value={"teams": teams() if table is None else table}) as request:
-            result = fetch_league_digest("E", now, weekly=weekly)
+            result = fetch_league_digest("E", now, weekly=weekly, include_standings=include_standings)
         return result, request
 
     def test_current_season_and_latest_played_round_not_future_round(self):
@@ -49,6 +49,21 @@ class LeagueTests(unittest.TestCase):
         self.assertEqual(result.standings_round, 5)
         self.assertIn("E2026/rounds/5/basicstandings", request.call_args.args[1])
         self.assertFalse(result.standings_unavailable)
+
+    def test_results_do_not_request_standings(self):
+        result, request = self.fetch([game()], include_standings=False)
+        request.assert_not_called()
+        texts = format_league_digest(result, view="results")
+        self.assertEqual(len(texts), 1)
+        self.assertIn("90:85", texts[0])
+        self.assertNotIn("Таблица", texts[0])
+
+    def test_table_view_does_not_include_match_results(self):
+        texts = format_league_digest(digest(), view="table")
+        self.assertEqual(len(texts), 1)
+        self.assertIn("Таблица", texts[0])
+        self.assertNotIn("Результаты", texts[0])
+        self.assertNotIn("90:85", texts[0])
 
     def test_weekly_results_use_moscow_midnights_and_exclude_monday(self):
         monday = datetime(2026, 11, 2, 9, tzinfo=TZ)
@@ -135,22 +150,23 @@ class LeagueBotTests(unittest.IsolatedAsyncioTestCase):
              self.assertLogs("app.league_jobs", "ERROR"):
             await publish_weekly_digest(bot, "channel", NOW)
         texts = [c.args[1] for c in bot.send_message.call_args_list]
-        self.assertEqual(len(texts), 3)
+        self.assertEqual(len(texts), 2)
         self.assertIn("Еврокубок", texts[0])
         self.assertTrue(all("Евролига" in text for text in texts[1:]))
 
-    async def test_weekly_sends_each_league_separately_and_retries_only_unsent_message(self):
+    async def test_weekly_sends_only_tables_and_retries_only_failed_league(self):
         bot = MagicMock()
-        bot.send_message = AsyncMock(side_effect=[None, RuntimeError("temporary"), None, None, None])
+        bot.send_message = AsyncMock(side_effect=[RuntimeError("temporary"), None, None])
         with patch("app.league_jobs.fetch_league_digest", side_effect=lambda c, *a: digest(c)), \
              patch("app.league_jobs.asyncio.sleep", new_callable=AsyncMock), \
              self.assertLogs("app.league_jobs", "ERROR"):
             await publish_weekly_digest(bot, "channel", NOW)
         texts = [c.args[1] for c in bot.send_message.call_args_list]
-        self.assertEqual(len(texts), 5)
+        self.assertEqual(len(texts), 3)
         self.assertIn("Еврокубок", texts[0])
-        self.assertEqual(texts[1], texts[2])
-        self.assertIn("Евролига", texts[3])
+        self.assertEqual(texts[0], texts[1])
+        self.assertIn("Евролига", texts[2])
+        self.assertTrue(all("Таблица" in text and "Результаты" not in text for text in texts))
 
     async def test_buttons_route_to_their_own_leagues(self):
         from aiogram import Bot, Dispatcher
@@ -160,15 +176,24 @@ class LeagueBotTests(unittest.IsolatedAsyncioTestCase):
         bot = Bot("42:TEST")
         try:
             with patch("app.poller.answer_league_digest", new_callable=AsyncMock) as answer:
-                for i, code in enumerate(["E", "U"]):
+                cases = [(label, code, view) for (code, view), label in VIEW_BUTTONS.items()]
+                cases.extend((BUTTONS[code], code, "table") for code in ("E", "U"))
+                cases.extend((f"/{command}", code, view) for command, code, view in [
+                    ("euroleague_results", "E", "results"), ("euroleague_table", "E", "table"),
+                    ("eurocup_results", "U", "results"), ("eurocup_table", "U", "table"),
+                ])
+                for i, (label, code, view) in enumerate(cases):
                     await dp.feed_raw_update(bot, {
                         "update_id": i,
                         "message": {"message_id": i, "date": 1793170800,
                                     "chat": {"id": 42, "type": "private"},
                                     "from": {"id": 42, "is_bot": False, "first_name": "Test"},
-                                    "text": BUTTONS[code]},
+                                    "text": label},
                     })
                     self.assertEqual(answer.call_args.args[1], code)
+                    self.assertEqual(answer.call_args.args[2], view)
+                keyboard = poller.main_keyboard()
+                self.assertEqual({b.text for row in keyboard.keyboard for b in row}, set(VIEW_BUTTONS.values()))
         finally:
             await bot.session.close()
 

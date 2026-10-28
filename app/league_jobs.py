@@ -41,7 +41,7 @@ async def publish_weekly_digest(bot: Bot, chat_id: str, now: datetime) -> None:
                     # Do not publish an incomplete weekly table to the channel.
                     if digest.standings_unavailable:
                         raise RuntimeError("Weekly standings unavailable")
-                    pending = format_league_digest(digest)
+                    pending = format_league_digest(digest, view="table")
                 while sent < len(pending):
                     await bot.send_message(chat_id, pending[sent], disable_web_page_preview=True)
                     sent += 1
